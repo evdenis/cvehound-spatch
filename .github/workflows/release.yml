@@ -26,7 +26,7 @@ jobs:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - run: |
         version=$(cat VERSION)
         tag="${GITHUB_REF_NAME#v}"

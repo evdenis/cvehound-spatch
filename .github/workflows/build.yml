@@ -29,7 +29,7 @@ jobs:
           runs-on: ubuntu-24.04-arm
     runs-on: ${{ matrix.runs-on }}
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
 
     # The build runs in the manylinux image via `docker run` rather than the
     # job-level `container:` key, so the Actions node runtime stays on the host
@@ -68,7 +68,7 @@ jobs:
           runs-on: ubuntu-24.04-arm
     runs-on: ${{ matrix.runs-on }}
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - uses: actions/download-artifact@v5
       with:
         name: wheel-${{ matrix.arch }}
@@ -108,7 +108,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - uses: actions/download-artifact@v5
       with:
         name: wheel-x86_64
