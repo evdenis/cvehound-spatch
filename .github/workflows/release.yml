@@ -1,0 +1,67 @@
+# Publishes the wheels to PyPI with Trusted Publishing (OIDC).
+#
+# One-time PyPI-side setup: add a trusted publisher at
+# https://pypi.org/manage/project/cvehound-spatch/settings/publishing/
+# with owner=evdenis, repository=cvehound-spatch, workflow=release.yml,
+# environment=pypi. For the TestPyPI dry run, add the same at
+# https://test.pypi.org/ with environment=testpypi.
+
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Index to publish to
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+jobs:
+  # A release tag that disagrees with VERSION would publish a wheel whose
+  # filename says one thing and whose tag says another.
+  check-version:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - run: |
+        version=$(cat VERSION)
+        tag="${GITHUB_REF_NAME#v}"
+        [[ "$version" == "$tag" ]] || {
+          echo "tag $GITHUB_REF_NAME does not match VERSION $version" >&2
+          exit 1
+        }
+
+  build:
+    needs: [check-version]
+    # check-version is skipped on workflow_dispatch; skipped is not failed.
+    if: always() && needs.check-version.result != 'failure'
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event_name == 'release' && 'pypi' || inputs.target }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+    - uses: actions/download-artifact@v5
+      with:
+        pattern: wheel-*
+        merge-multiple: true
+        path: dist
+
+    - uses: astral-sh/setup-uv@v10.0.1
+
+    - name: Publish
+      run: |
+        if [[ "${{ github.event_name }}" == "release" || "${{ inputs.target }}" == "pypi" ]]; then
+          uv publish dist/*.whl
+        else
+          uv publish --publish-url https://test.pypi.org/legacy/ dist/*.whl
+        fi

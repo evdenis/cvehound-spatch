@@ -1,0 +1,121 @@
+# Builds the spatch bundle and packs it into wheels, then verifies those wheels
+# on distributions older and newer than the build image.
+#
+# release.yml calls this workflow, so a published release always ships binaries
+# that CI built from source in this run.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+  schedule:
+    # Weekly: the coccinelle branch, the manylinux image and the opam
+    # repository all move without anything happening in this repo.
+    - cron: '0 5 * * MON'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: x86_64
+          runs-on: ubuntu-latest
+        - arch: aarch64
+          runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+    - uses: actions/checkout@v5
+
+    # The build runs in the manylinux image via `docker run` rather than the
+    # job-level `container:` key, so the Actions node runtime stays on the host
+    # and out of AlmaLinux 8.
+    - name: Restore the opam cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/cvehound-spatch-build
+        key: opam-${{ matrix.arch }}-${{ hashFiles('build.sh') }}
+        restore-keys: opam-${{ matrix.arch }}-
+
+    - name: Build the bundle
+      run: ENGINE=docker ./build-in-container.sh
+
+    - name: Take ownership of the container's output
+      run: sudo chown -R "$(id -u):$(id -g)" dist ~/.cache/cvehound-spatch-build
+
+    - name: Pack the wheel
+      run: ./make_wheel.py --bundle dist/bundle-${{ matrix.arch }}
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: wheel-${{ matrix.arch }}
+        path: dist/*.whl
+        if-no-files-found: error
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: x86_64
+          runs-on: ubuntu-latest
+        - arch: aarch64
+          runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/download-artifact@v5
+      with:
+        name: wheel-${{ matrix.arch }}
+        path: dist
+
+    # glibc 2.36, newer than the build image.
+    - name: Smoke on debian:12
+      run: |
+        docker run --rm -v "$PWD:/io" -w /io debian:12 bash -euxc '
+          apt-get update -qq && apt-get install -y -qq python3 python3-venv >/dev/null
+          python3 -m venv /venv
+          /venv/bin/pip install -q dist/*.whl
+          /venv/bin/python tests/smoke.py'
+
+    # glibc 2.28, the manylinux_2_28 floor itself. Its stock pip predates
+    # manylinux_2_28 support, and the image ships no diffutils -- both are
+    # documented requirements rather than things the wheel can carry.
+    - name: Smoke on almalinux:8
+      run: |
+        docker run --rm -v "$PWD:/io" -w /io almalinux:8 bash -euxc '
+          dnf install -y -q python39 diffutils >/dev/null
+          python3.9 -m venv /venv
+          /venv/bin/pip install -q --upgrade pip
+          /venv/bin/pip install -q dist/*.whl
+          /venv/bin/python tests/smoke.py'
+
+    - name: Smoke on the bare runner
+      run: |
+        python3 -m venv /tmp/venv
+        /tmp/venv/bin/pip install -q dist/*.whl
+        /tmp/venv/bin/python tests/smoke.py
+
+  # The contract with the consumer: every CVEhound rule must still parse on a
+  # python-less spatch. Runs against CVEhound's main branch, which is where a
+  # rule that needs Python would first show up.
+  rules:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/download-artifact@v5
+      with:
+        name: wheel-x86_64
+        path: dist
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+    - run: |
+        pip install -q dist/*.whl 'cvehound @ git+https://github.com/evdenis/cvehound@main'
+        CVEHOUND_CONTENT=none python tests/smoke.py
