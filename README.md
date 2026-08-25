@@ -85,17 +85,24 @@ decided by measurement:
 - **Bounds checks kept.** Coccinelle builds with `-unsafe` by default; removing
   the checks is worth about 1 % here, which is not a good trade against running
   a parser over untrusted sources.
-- **One patch on top of 1.3.2**: caching of `satLabel` results, which fixes a
-  large performance regression on rules that wrap a pattern in a function
-  context (35× on the rules that trigger it). Submitted upstream as
-  [coccinelle#417](https://github.com/coccinelle/coccinelle/pull/417) and
-  reviewed; carried here until it is in a release.
+- **Two patches on top of 1.3.2**, both performance regressions, both submitted
+  upstream and carried here until they are in a release:
+  - caching of `satLabel` results, which fixes a large regression on rules that
+    wrap a pattern in a function context (35× on the rules that trigger it) —
+    [coccinelle#417](https://github.com/coccinelle/coccinelle/pull/417),
+    reviewed;
+  - an atoms-only fallback when the file prefilter's CNF conversion hits
+    `max_cnf`. Giving up there returned "no query", which `worth_trying` reads
+    as "try every file", so the semantic patch ran over the whole tree with no
+    prefiltering at all; it now degrades to a one-clause query over the atoms,
+    which is still sound because the formula is negation-free —
+    [coccinelle#420](https://github.com/coccinelle/coccinelle/pull/420).
 
 ## Provenance and reproducing a build
 
 Sources come from the [`cvehound`
 branch](https://github.com/evdenis/coccinelle/tree/cvehound) of the coccinelle
-fork — coccinelle 1.3.2 plus the one patch above, nothing else. Every wheel
+fork — coccinelle 1.3.2 plus the two patches above, nothing else. Every wheel
 records the exact commit in `BUILD-INFO` and in `COCCINELLE_COMMIT`.
 
 To rebuild locally (needs podman or docker):
