@@ -1,0 +1,11 @@
+# Only github-actions: this repository has no Python dependency manifest by
+# design (the wheel has no runtime dependencies and make_wheel.py is stdlib
+# only). The coccinelle branch, the OCaml compiler and the manylinux image are
+# invisible to dependabot -- the weekly scheduled build in build.yml is what
+# catches drift there.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
