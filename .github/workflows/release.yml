@@ -3,8 +3,10 @@
 # One-time PyPI-side setup: add a trusted publisher at
 # https://pypi.org/manage/project/cvehound-spatch/settings/publishing/
 # with owner=evdenis, repository=cvehound-spatch, workflow=release.yml,
-# environment=pypi. For the TestPyPI dry run, add the same at
-# https://test.pypi.org/ with environment=testpypi.
+# environment=pypi.
+#
+# Publishing a GitHub release is what ships a version; running this workflow by
+# hand only rehearses the build.
 
 name: release
 
@@ -12,22 +14,21 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      target:
-        description: Index to publish to
-        type: choice
-        options: [testpypi, pypi]
-        default: testpypi
 
 jobs:
   # A release tag that disagrees with VERSION would publish a wheel whose
-  # filename says one thing and whose tag says another.
+  # filename says one thing and whose tag says another. This runs on every
+  # event -- not just releases -- because a job that is skipped makes GitHub
+  # skip everything downstream of it, publish included.
   check-version:
-    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
     - run: |
+        if [[ "$GITHUB_EVENT_NAME" != release ]]; then
+          echo "$GITHUB_EVENT_NAME: no tag to check"
+          exit 0
+        fi
         version=$(cat VERSION)
         tag="${GITHUB_REF_NAME#v}"
         [[ "$version" == "$tag" ]] || {
@@ -37,15 +38,14 @@ jobs:
 
   build:
     needs: [check-version]
-    # check-version is skipped on workflow_dispatch; skipped is not failed.
-    if: always() && needs.check-version.result != 'failure'
     uses: ./.github/workflows/build.yml
 
   publish:
     needs: [build]
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment:
-      name: ${{ github.event_name == 'release' && 'pypi' || inputs.target }}
+      name: pypi
     permissions:
       contents: read
       id-token: write
@@ -59,9 +59,4 @@ jobs:
     - uses: astral-sh/setup-uv@v10.0.1
 
     - name: Publish
-      run: |
-        if [[ "${{ github.event_name }}" == "release" || "${{ inputs.target }}" == "pypi" ]]; then
-          uv publish dist/*.whl
-        else
-          uv publish --publish-url https://test.pypi.org/legacy/ dist/*.whl
-        fi
+      run: uv publish dist/*.whl
