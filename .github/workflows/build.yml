@@ -35,7 +35,7 @@ jobs:
     # job-level `container:` key, so the Actions node runtime stays on the host
     # and out of AlmaLinux 8.
     - name: Restore the opam cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/.cache/cvehound-spatch-build
         key: opam-${{ matrix.arch }}-${{ hashFiles('build.sh') }}
