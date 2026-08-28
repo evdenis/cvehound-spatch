@@ -94,14 +94,14 @@ decided by measurement:
   corpus — which this build does not have and would have to grow, and its
   benefit measures at zero once spatch shares parsed ASTs between rules, which
   is the direction CVEhound is heading. The pipeline works and the numbers are
-  real (L1i misses −17 %), so it is written down rather than built in; if the
-  workload ever becomes frontend-bound it is there to collect. Full analysis:
-  `spatch-daemon.md` §11 in the coccinelle tree.
+  real (L1i misses −17 %, ITLB −11 %, cycles only −0.7 % because the workload
+  is not frontend-bound), so it is written down rather than built in; if that
+  ever changes it is there to collect.
   (OCaml has neither LTO nor usable PGO, so there is nothing else to try.)
 - **Bounds checks kept.** Coccinelle builds with `-unsafe` by default; removing
   the checks is worth about 1 % here, which is not a good trade against running
   a parser over untrusted sources.
-- **Two patches on top of 1.3.2**, both performance regressions, both submitted
+- **Patches on top of 1.3.2.** Two are performance regressions, both submitted
   upstream and carried here until they are in a release:
   - caching of `satLabel` results, which fixes a large regression on rules that
     wrap a pattern in a function context (35× on the rules that trigger it) —
@@ -114,12 +114,45 @@ decided by measurement:
     which is still sound because the formula is negation-free —
     [coccinelle#420](https://github.com/coccinelle/coccinelle/pull/420).
 
+  Four more change how spatch can be driven, and are what this build's
+  `FEATURES` advertises:
+  - **`--zygote`**, a fork-per-request server mode. It warms `standard.iso` and
+    `standard.h` once and then forks per request, so a scan of many rules pays
+    process startup once instead of per rule. Every request still runs in its
+    own process, so no engine global survives from one rule to the next.
+  - **exit 124 on an engine timeout.** A fired `--timeout` used to escape as an
+    uncaught `Common.Timeout`, i.e. exit 2, indistinguishable from a crash; it
+    now exits 124 the way `timeout(1)` does, keeping the exception name in the
+    message for callers that already scrape it.
+  - **A shareable AST cache.** `--cache-prefix` entries are written through a
+    temporary name and renamed, value before dependencies, so parallel scans
+    sharing one cache cannot read a torn entry; `standard.h` is now part of the
+    cache key.
+  - **Cheaper per-file overhead**: the `standard.iso` parse and `standard.h`
+    extraction are memoised, and the cache path no longer forks `/bin/sh` to
+    run `mkdir -p` once per file — which a cache *hit* was also paying.
+
 ## Provenance and reproducing a build
 
 Sources come from the [`cvehound`
 branch](https://github.com/evdenis/coccinelle/tree/cvehound) of the coccinelle
-fork — coccinelle 1.3.2 plus the two patches above, nothing else. Every wheel
-records the exact commit in `BUILD-INFO` and in `COCCINELLE_COMMIT`.
+fork — coccinelle 1.3.2 plus the patches above, nothing else. Every wheel
+records the exact commit in `BUILD-INFO` and in `COCCINELLE_COMMIT`, and the
+capabilities it was *probed* to have in `FEATURES`:
+
+```python
+>>> import cvehound_spatch
+>>> cvehound_spatch.FEATURES
+frozenset({'exit124', 'shared-cache', 'zygote'})
+```
+
+`FEATURES` exists because these capabilities cannot be detected from outside:
+`--zygote` is dispatched before spatch parses its arguments, so it appears in
+no `--help` output, and the version banner is identical with and without it.
+`make_wheel.py` probes the binary at pack time rather than asserting, so a
+build from a ref that predates a feature advertises nothing instead of lying,
+and a consumer reading `getattr(cvehound_spatch, 'FEATURES', frozenset())`
+degrades correctly against any older wheel.
 
 To rebuild locally (needs podman or docker):
 

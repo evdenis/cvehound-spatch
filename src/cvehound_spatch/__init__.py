@@ -13,22 +13,24 @@ below raises ``FileNotFoundError`` in that case.
 from pathlib import Path
 
 try:
-    from cvehound_spatch._build_info import (  # ty: ignore[unresolved-import]
-        BUILD_INFO,
-        COCCINELLE_COMMIT,
-        COCCINELLE_VERSION,
-        __version__,
-    )
+    from cvehound_spatch import _build_info  # ty: ignore[unresolved-import]
 except ImportError:  # source checkout, no wheel built
-    __version__ = '0.dev0'
-    COCCINELLE_VERSION = 'unknown'
-    COCCINELLE_COMMIT = 'unknown'
-    BUILD_INFO: dict[str, str] = {}
+    _build_info = None  # ty: ignore[invalid-assignment]
+
+__version__ = getattr(_build_info, '__version__', '0.dev0')
+COCCINELLE_VERSION = getattr(_build_info, 'COCCINELLE_VERSION', 'unknown')
+COCCINELLE_COMMIT = getattr(_build_info, 'COCCINELLE_COMMIT', 'unknown')
+BUILD_INFO: dict[str, str] = getattr(_build_info, 'BUILD_INFO', {})
+# Read defensively rather than imported: a wheel packed before this existed has
+# a _build_info without it, and that must degrade to "declares nothing" rather
+# than take the whole module's metadata down with it.
+FEATURES: frozenset[str] = getattr(_build_info, 'FEATURES', frozenset())
 
 __all__ = [
     'BUILD_INFO',
     'COCCINELLE_COMMIT',
     'COCCINELLE_VERSION',
+    'FEATURES',
     '__version__',
     'iso_file',
     'macro_file',

@@ -15,6 +15,7 @@ import csv
 import hashlib
 import io
 import stat
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -44,7 +45,36 @@ def parse_build_info(path: Path) -> dict[str, str]:
     return info
 
 
-def build_info_module(version: str, info: dict[str, str]) -> str:
+# Capabilities a consumer cannot detect for itself. --zygote is dispatched
+# before spatch parses argv, so it appears in no --help output, and the version
+# banner is identical with and without it -- leaving a caller no honest way to
+# ask. Declaring it here is that answer, and it is probed rather than asserted
+# so that building from a ref that predates the feature advertises nothing
+# instead of lying. The three ship together from the same branch, so one probe
+# gates the set.
+FEATURE_SET = ('zygote', 'exit124', 'shared-cache')
+
+
+def probe_features(spatch: Path) -> tuple[str, ...]:
+    """Ask the built binary whether it speaks the zygote protocol.
+
+    An unsupported build exits 2 with "unknown option '--zygote'"; a supported
+    one warms up, reads EOF on stdin and exits 0.
+    """
+    try:
+        run = subprocess.run(
+            [str(spatch), '--zygote'],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ()
+    return FEATURE_SET if run.returncode == 0 else ()
+
+
+def build_info_module(version: str, info: dict[str, str], features: tuple[str, ...]) -> str:
     spatch_version = info.get('spatch_version', '')
     coccinelle_version = spatch_version.split()[2] if spatch_version else 'unknown'
     lines = [
@@ -53,6 +83,7 @@ def build_info_module(version: str, info: dict[str, str]) -> str:
         f'__version__ = {version!r}',
         f'COCCINELLE_VERSION = {coccinelle_version!r}',
         f'COCCINELLE_COMMIT = {info.get("coccinelle_sha", "unknown")!r}',
+        f'FEATURES = frozenset({sorted(features)!r})',
         'BUILD_INFO = {',
     ]
     lines += [f'    {k!r}: {v!r},' for k, v in info.items()]
@@ -153,6 +184,8 @@ def main() -> int:
 
     version = (HERE / 'VERSION').read_text().strip()
     info = parse_build_info(bundle / 'BUILD-INFO')
+    features = probe_features(bundle / 'spatch')
+    print(f'== features: {" ".join(features) if features else "(none)"}')
     readme = (HERE / 'README.md').read_text()
 
     tag = f'py3-none-{plat}'
@@ -163,7 +196,7 @@ def main() -> int:
     wheel = WheelWriter(wheel_path)
     for name in ('__init__.py', '__main__.py'):
         wheel.add_file(f'{PACKAGE}/{name}', HERE / 'src' / PACKAGE / name)
-    wheel.add_text(f'{PACKAGE}/_build_info.py', build_info_module(version, info))
+    wheel.add_text(f'{PACKAGE}/_build_info.py', build_info_module(version, info, features))
     wheel.add_file(f'{PACKAGE}/spatch', bundle / 'spatch', mode=0o755)
     for name in ('standard.h', 'standard.iso', 'BUILD-INFO'):
         wheel.add_file(f'{PACKAGE}/{name}', bundle / name)
