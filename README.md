@@ -79,8 +79,24 @@ decided by measurement:
 - **OCaml 5.3**. The 5.x runtime is 20-25 % faster than 4.x on the heavy rules,
   by far the largest effect found. Verdicts are identical, and coccinelle's own
   test suite scores the same on both.
-- **No flambda, no BOLT.** Both were built and measured: 2-3 %, for 6-12 MB of
-  extra binary and a much more complicated release pipeline. Not worth it.
+- **flambda `-O3`, but no BOLT.** Both were built and measured twice. The first
+  study (six heavy rules, OCaml 4.14, one spatch exec per rule) put flambda at
+  2-3 % and rejected it. Re-measured on the real corpus — 490 rules, each
+  compared against itself, both binary orders — flambda is worth **4.5 %** of
+  CPU, and 5.3 % when spatch is run as a fork-per-request server. The earlier
+  number was an artifact of a workload whose cost sat in a few heavy rules;
+  inlining pays across the many small and medium ones. It costs +11.4 MB, which
+  buys +428 minor page faults per exec and 0.05 ms — a real cost, and a
+  negligible one.
+
+  BOLT is worth a further ~1.3 points and is **not** shipped. It needs a
+  representative workload to train a profile on — a kernel tree and the rule
+  corpus — which this build does not have and would have to grow, and its
+  benefit measures at zero once spatch shares parsed ASTs between rules, which
+  is the direction CVEhound is heading. The pipeline works and the numbers are
+  real (L1i misses −17 %), so it is written down rather than built in; if the
+  workload ever becomes frontend-bound it is there to collect. Full analysis:
+  `spatch-daemon.md` §11 in the coccinelle tree.
   (OCaml has neither LTO nor usable PGO, so there is nothing else to try.)
 - **Bounds checks kept.** Coccinelle builds with `-unsafe` by default; removing
   the checks is worth about 1 % here, which is not a good trade against running

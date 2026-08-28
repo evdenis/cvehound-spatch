@@ -51,9 +51,15 @@ if [ ! -d "$OPAMROOT/repo" ]; then
     opam init --bare --disable-sandboxing -n >/dev/null
 fi
 
-SWITCH="cocci-$OCAML_VERSION"
+# flambda: measured at -4.5% CPU on a 490-rule scan and -5.3% under the zygote
+# transport (README.md, "Choices made"). It costs +11.4MB of binary, which is
+# only a per-exec page-in tax -- +428 minor faults, 0.05ms -- so it does not
+# pay that back per invocation. The switch name carries the variant: a plain
+# "cocci-5.3.0" switch may already exist in a cached OPAMROOT.
+SWITCH="cocci-$OCAML_VERSION-flambda"
 if ! opam switch list --short 2>/dev/null | grep -qx "$SWITCH"; then
-    opam switch create "$SWITCH" "ocaml-base-compiler.$OCAML_VERSION" -y
+    opam switch create "$SWITCH" \
+        --packages="ocaml-variants.$OCAML_VERSION+options,ocaml-option-flambda" -y
 fi
 # coccinelle's bundles/ carry menhir, parmap and stdcompat; ocamlfind is the
 # only thing configure needs from opam.
@@ -88,6 +94,10 @@ CONFIGURE_FLAGS=(
 # Bounds checks are worth ~1% here, so drop coccinelle's default -unsafe:
 # Makefile.config uses ?= for both variables, so the environment wins.
 export OCAMLCFLAGS='-w @42' OPTFLAGS='-w @42'
+
+# -O3 is where flambda's win was measured; the level is set through OCAMLPARAM
+# because coccinelle's Makefile has no hook for it.
+export OCAMLPARAM="_,O3=1"
 
 # The hand-written Makefile is not reliably parallel-safe; retry sequentially.
 make -j"$JOBS" opt-only || { echo "== parallel make failed, retrying -j1"; make opt-only; }
