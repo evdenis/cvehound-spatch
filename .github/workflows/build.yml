@@ -1,5 +1,6 @@
-# Builds the spatch bundle and packs it into wheels, then verifies those wheels
-# on distributions older and newer than the build image.
+# Builds the spatch bundle and packs it into wheels, then verifies those wheels:
+# on Linux against distributions older and newer than the build image, and on
+# macOS against the runner itself.
 #
 # release.yml calls this workflow, so a published release always ships binaries
 # that CI built from source in this run.
@@ -56,6 +57,37 @@ jobs:
         path: dist/*.whl
         if-no-files-found: error
 
+  # Not a row in the matrix above, because `smoke` cannot be one: on Linux it
+  # runs two `docker run` steps that mean nothing on macOS, so a macOS row would
+  # carry them behind `if: runner.os` guards. Since smoke has to split, build
+  # splits the same way and the two halves stay parallel. macos-15 is pinned
+  # rather than macos-latest to keep the SDK the build sees reproducible; the
+  # literal bundle-arm64 below then fails loudly if that pin ever moves arch.
+  build-macos:
+    runs-on: macos-15
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Restore the opam cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/cvehound-spatch-build
+        key: opam-macos-arm64-${{ hashFiles('build.sh') }}
+        restore-keys: opam-macos-arm64-
+
+    # build.sh brew-installs whatever autogen and opam need that the image lacks.
+    - name: Build the bundle
+      run: ./build.sh
+
+    - name: Pack the wheel
+      run: ./make_wheel.py --bundle dist/bundle-arm64
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: wheel-macos-arm64
+        path: dist/*.whl
+        if-no-files-found: error
+
   smoke:
     needs: build
     strategy:
@@ -94,6 +126,25 @@ jobs:
           /venv/bin/pip install -q --upgrade pip
           /venv/bin/pip install -q dist/*.whl
           /venv/bin/python tests/smoke.py'
+
+    - name: Smoke on the bare runner
+      run: |
+        python3 -m venv /tmp/venv
+        /tmp/venv/bin/pip install -q dist/*.whl
+        /tmp/venv/bin/python tests/smoke.py
+
+  # One macOS, one check: there is no equivalent of the debian:12/almalinux:8
+  # pair here, because the wheel's floor is a deployment target rather than a
+  # userland version that older images could disagree with.
+  smoke-macos:
+    needs: build-macos
+    runs-on: macos-15
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/download-artifact@v8
+      with:
+        name: wheel-macos-arm64
+        path: dist
 
     - name: Smoke on the bare runner
       run: |

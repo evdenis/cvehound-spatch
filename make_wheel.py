@@ -25,12 +25,6 @@ DISTRIBUTION = 'cvehound_spatch'
 PACKAGE = 'cvehound_spatch'
 SUMMARY = 'Prebuilt Coccinelle spatch binary, tailored for CVEhound'
 
-# uname machine -> the manylinux platform tag the build image produces
-PLATFORM_TAGS = {
-    'x86_64': 'manylinux_2_28_x86_64',
-    'aarch64': 'manylinux_2_28_aarch64',
-}
-
 # Deterministic zip timestamp: the wheel content is a function of the bundle,
 # not of when it was packed.
 ZIP_DATE = (1980, 1, 1, 0, 0, 0)
@@ -91,7 +85,15 @@ def build_info_module(version: str, info: dict[str, str], features: tuple[str, .
     return '\n'.join(lines)
 
 
-def metadata(version: str, readme: str) -> str:
+def os_classifier(plat: str) -> str:
+    return (
+        'Operating System :: MacOS :: MacOS X'
+        if plat.startswith('macosx')
+        else 'Operating System :: POSIX :: Linux'
+    )
+
+
+def metadata(version: str, plat: str, readme: str) -> str:
     fields = [
         'Metadata-Version: 2.4',
         f'Name: {DISTRIBUTION.replace("_", "-")}',
@@ -106,7 +108,7 @@ def metadata(version: str, readme: str) -> str:
         'Project-URL: Coccinelle, https://github.com/coccinelle/coccinelle',
         'Classifier: Development Status :: 4 - Beta',
         'Classifier: Intended Audience :: Developers',
-        'Classifier: Operating System :: POSIX :: Linux',
+        f'Classifier: {os_classifier(plat)}',
         'Classifier: Programming Language :: Python :: 3',
         'Classifier: Topic :: Security',
         'Classifier: Topic :: Software Development :: Quality Assurance',
@@ -170,20 +172,22 @@ class WheelWriter:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bundle', required=True, type=Path, help='directory built by build.sh')
-    parser.add_argument('--plat', help='platform tag (default: from the bundle directory name)')
+    parser.add_argument('--plat', help="platform tag (default: the bundle's own platform_tag)")
     parser.add_argument('--outdir', type=Path, default=HERE / 'dist')
     args = parser.parse_args()
 
     bundle: Path = args.bundle
-    plat = args.plat
-    if not plat:
-        arch = bundle.name.rsplit('-', 1)[-1]
-        plat = PLATFORM_TAGS.get(arch)
-        if not plat:
-            parser.error(f'cannot infer a platform tag from {bundle.name!r}; pass --plat')
 
     version = (HERE / 'VERSION').read_text().strip()
     info = parse_build_info(bundle / 'BUILD-INFO')
+
+    # build.sh is the only thing that knows the build OS and, on macOS, the
+    # deployment target the tag has to track, so it records the tag and this
+    # reads it. Nothing here tries to guess one from the directory name.
+    plat = args.plat or info.get('platform_tag')
+    if not plat:
+        parser.error(f'{bundle}/BUILD-INFO records no platform_tag; rebuild it, or pass --plat')
+
     features = probe_features(bundle / 'spatch')
     print(f'== features: {" ".join(features) if features else "(none)"}')
     readme = (HERE / 'README.md').read_text()
@@ -200,7 +204,7 @@ def main() -> int:
     wheel.add_file(f'{PACKAGE}/spatch', bundle / 'spatch', mode=0o755)
     for name in ('standard.h', 'standard.iso', 'BUILD-INFO'):
         wheel.add_file(f'{PACKAGE}/{name}', bundle / name)
-    wheel.add_text(f'{dist_info}/METADATA', metadata(version, readme))
+    wheel.add_text(f'{dist_info}/METADATA', metadata(version, plat, readme))
     wheel.add_text(f'{dist_info}/WHEEL', wheel_file(tag))
     wheel.add_file(f'{dist_info}/licenses/LICENSE', HERE / 'LICENSE')
     wheel.close(f'{dist_info}/RECORD')

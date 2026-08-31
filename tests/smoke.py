@@ -4,9 +4,9 @@
     python tests/smoke.py [--rules <dir>]
 
 Checks, in order: the package resolves its payload, the binary runs, it is
-python-less, it links against nothing but glibc, it detects the fixture the way
-CVEhound expects, and -- when a rule corpus is reachable -- every CVEhound rule
-still parses on it. Exits non-zero on the first failure.
+python-less, it links against nothing but the platform libc, it detects the
+fixture the way CVEhound expects, and -- when a rule corpus is reachable --
+every CVEhound rule still parses on it. Exits non-zero on the first failure.
 
 The rule corpus comes from ``--rules``, else from an installed cvehound
 (``cvehound.content.resolve_content()``), else that step is skipped with a note.
@@ -22,8 +22,11 @@ import sys
 from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent / 'fixtures'
-# Anything outside this set means the wheel is not as portable as its tag says.
-ALLOWED_LIBS = ('linux-vdso', 'libm.so', 'libc.so', 'libdl.so', 'libpthread.so', 'librt.so', 'ld-linux')
+# Anything outside these sets means the wheel is not as portable as its tag says.
+# pre-2.34 glibc splits libdl/libpthread/librt out of libc; all are core glibc.
+ALLOWED_LIBS_LINUX = ('linux-vdso', 'libm.so', 'libc.so', 'libdl.so', 'libpthread.so', 'librt.so', 'ld-linux')
+# libSystem is macOS's glibc, and a python-less, pcre-less build needs no more.
+ALLOWED_LIBS_MACOS = ('/usr/lib/libSystem.B.dylib',)
 
 failures = []
 
@@ -36,6 +39,33 @@ def check(name: str, ok: bool, detail: str = '') -> None:
 
 def spatch_run(spatch: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run([str(spatch), *args], capture_output=True, text=True, check=False)
+
+
+def unexpected_libraries(spatch: Path) -> list:
+    """Shared libraries the binary links that its platform tag does not cover.
+
+    macOS has no ldd; otool -L is the equivalent, and it repeats the file's own
+    name on the first line before listing the dependencies.
+
+    A missing or failing inspector is reported as a finding rather than swallowed:
+    empty output would otherwise make this check pass without inspecting anything.
+    """
+    darwin = sys.platform == 'darwin'
+    argv = ['otool', '-L', str(spatch)] if darwin else ['ldd', str(spatch)]
+    try:
+        run = subprocess.run(argv, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        return [f'cannot run {argv[0]}: {exc}']
+    if run.returncode != 0:
+        return [f'{argv[0]} failed (rc={run.returncode}): {run.stderr.strip() or run.stdout.strip()}']
+    lines = run.stdout.splitlines()
+    if darwin:
+        deps, allowed = lines[1:], ALLOWED_LIBS_MACOS
+    else:
+        deps, allowed = [line for line in lines if '=>' in line], ALLOWED_LIBS_LINUX
+    return [
+        line.strip() for line in deps if line.strip() and not any(lib in line for lib in allowed)
+    ]
 
 
 def detect(spatch: Path, rule: Path, source: Path) -> str:
@@ -91,13 +121,8 @@ def main() -> int:
     # libpython dlopen failure mode back in.
     check('built without Python scripting', 'Python scripting support: no' in version.stdout)
 
-    ldd = subprocess.run(['ldd', str(spatch)], capture_output=True, text=True, check=False)
-    unexpected = [
-        line.strip()
-        for line in ldd.stdout.splitlines()
-        if '=>' in line and not any(lib in line for lib in ALLOWED_LIBS)
-    ]
-    check('links against glibc only', not unexpected, '; '.join(unexpected))
+    unexpected = unexpected_libraries(spatch)
+    check('links against the platform libc only', not unexpected, '; '.join(unexpected))
 
     # spatch prints its context-mode output by running diff(1); without it the
     # run still exits 0 and reports nothing, which is the worst way to fail.

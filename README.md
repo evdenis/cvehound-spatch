@@ -18,7 +18,7 @@ this package → `PATH`.
 
 ## What is in the wheel
 
-Four files inside the `cvehound_spatch/` package directory, about 20 MB:
+Four files inside the `cvehound_spatch/` package directory, 20-25 MB:
 
 | file | |
 | --- | --- |
@@ -32,10 +32,11 @@ to the real path of its own executable, so the directory is relocatable and
 callers need no `--iso-file`/`--macro-file-builtins` arguments.
 
 Wheels are built for Linux `x86_64` and `aarch64` against glibc 2.28
-(`manylinux_2_28`); the binary links against nothing but glibc. On any other
-platform the wheel simply does not install, and CVEhound falls back to `PATH`.
-Installing needs pip 20.3 or newer, which is where `manylinux_2_28` support
-landed.
+(`manylinux_2_28`), and for macOS `arm64` against a macOS 11 deployment target
+(`macosx_11_0_arm64`). The binary links against nothing but the platform's own
+libc — glibc on Linux, `libSystem` on macOS. On any other platform the wheel
+simply does not install, and CVEhound falls back to `PATH`. Installing needs pip
+20.3 or newer, which is where `manylinux_2_28` support landed.
 
 One runtime requirement is not in the wheel: **`diff`** (diffutils). Coccinelle
 renders what a rule matched by shelling out to it, and on a system without it
@@ -79,6 +80,13 @@ decided by measurement:
 - **OCaml 5.3**. The 5.x runtime is 20-25 % faster than 4.x on the heavy rules,
   by far the largest effect found. Verdicts are identical, and coccinelle's own
   test suite scores the same on both.
+- **OCaml built `--without-zstd`** (`ocaml-option-no-compression`). From 5.1 the
+  runtime links libzstd wherever configure finds it, and a wheel cannot ship a
+  Homebrew dylib — on macOS this put `/opt/homebrew/opt/zstd` straight into
+  `otool -L`. The manylinux image happens to carry no zstd headers, so the Linux
+  build was getting the same result by luck; asking for it makes the invariant
+  explicit on both. Nothing is given up: compressed marshalling is opt-in, and
+  the compilation artifacts zstd would shrink are not shipped.
 - **flambda `-O3`, but no BOLT.** Both were built and measured twice. The first
   study (six heavy rules, OCaml 4.14, one spatch exec per rule) put flambda at
   2-3 % and rejected it. Re-measured on the real corpus — 490 rules, each
@@ -114,8 +122,9 @@ decided by measurement:
     which is still sound because the formula is negation-free —
     [coccinelle#420](https://github.com/coccinelle/coccinelle/pull/420).
 
-  Four more change how spatch can be driven, and are what this build's
-  `FEATURES` advertises:
+  Four more change how spatch can be driven. The first three are the named
+  capabilities this build's `FEATURES` advertises; the fourth is invisible to
+  callers and needs no flag:
   - **`--zygote`**, a fork-per-request server mode. It warms `standard.iso` and
     `standard.h` once and then forks per request, so a scan of many rules pays
     process startup once instead of per rule. Every request still runs in its
@@ -154,16 +163,27 @@ build from a ref that predates a feature advertises nothing instead of lying,
 and a consumer reading `getattr(cvehound_spatch, 'FEATURES', frozenset())`
 degrades correctly against any older wheel.
 
-To rebuild locally (needs podman or docker):
+To rebuild locally on Linux (needs podman or docker):
 
 ```shell
 ./build-in-container.sh          # -> dist/bundle-<arch>/
 ./make_wheel.py --bundle dist/bundle-$(uname -m)
 ```
 
-`build.sh` is what runs inside the `manylinux_2_28` image; it fails the build if
-the binary picks up a non-glibc dependency, needs a glibc newer than 2.28, or
-turns out to have Python support.
+On macOS there is no container to be portable against, so `build.sh` runs
+directly on the host and installs what it needs through Homebrew:
+
+```shell
+./build.sh                       # -> dist/bundle-<arch>/
+./make_wheel.py --bundle dist/bundle-$(uname -m)
+```
+
+`build.sh` is the build on both — inside the `manylinux_2_28` image on Linux, on
+the host on macOS — and it fails the build if the binary picks up a dependency
+beyond the platform's libc or turns out to have Python support. On Linux it also
+rejects a binary needing glibc newer than 2.28; on macOS it rejects one whose
+`LC_BUILD_VERSION` disagrees with the deployment target the wheel tag promises,
+or whose ad-hoc signature is not valid.
 
 Verify a built wheel with `python tests/smoke.py` after installing it — the same
 script CI runs, including a parse check over every CVEhound rule.
