@@ -2,7 +2,8 @@
 # design (the wheel has no runtime dependencies and make_wheel.py is stdlib
 # only). The coccinelle branch, the OCaml compiler and the manylinux image are
 # invisible to dependabot -- the weekly scheduled build in build.yml is what
-# catches drift there.
+# catches drift there, and coccinelle-upstream.yml is what notices a new
+# coccinelle release, which drifts nothing and so breaks no build.
 version: 2
 updates:
   - package-ecosystem: "github-actions"

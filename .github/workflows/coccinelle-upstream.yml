@@ -1,0 +1,117 @@
+# Watches upstream coccinelle for a release newer than the one we ship, and
+# opens an issue when there is one.
+#
+# Nothing else here looks at coccinelle/coccinelle: build.sh follows the
+# `cvehound` branch of the fork, which only moves when someone rebases it by
+# hand, so a new upstream release produces no signal at all -- the weekly build
+# in build.yml keeps succeeding on the old base. This is that missing signal.
+# It builds nothing; it only says when a rebase is due.
+
+name: coccinelle-upstream
+
+on:
+  schedule:
+    # After build.yml's '0 5 * * MON', so a Monday-morning failure mail says
+    # unambiguously which of the two broke -- and off the top of the hour,
+    # which is where scheduled runs queue behind everyone else's.
+    - cron: '23 6 * * MON'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    # `git ls-remote` against a stalled github.com has no timeout of its own,
+    # and the job default is six hours to spend on two seconds of work.
+    timeout-minutes: 5
+
+    # The repository's default workflow token is read-only, so the issue and
+    # its label both have to be asked for. Scoped to the job, as release.yml
+    # scopes its own.
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Compare VERSION against the newest upstream tag
+      id: check
+      run: |
+        # VERSION is the coccinelle release we package; .postN is ours alone.
+        # The repo's other derivation of this fact is make_wheel.py:71-73,
+        # which scrapes it off the built binary -- not available here, since
+        # this workflow deliberately builds nothing.
+        ours=$(sed 's/\.post[0-9]*$//' VERSION)
+
+        # Upstream publishes no GitHub releases, only tags -- and the tags API
+        # returns them in reverse *lexicographic* order, where 1.3.3 sits 96th
+        # behind every `ubuntu/...`, `coccinelle-0.x` and `v1.0.0-rc8`. So the
+        # newest release has to be computed, not read off the top: take every
+        # tag over one `ls-remote` (no paging, no token, no rate limit), keep
+        # the plain numeric ones, and version-sort. Two components are allowed
+        # because upstream really does tag both `1.3` and `1.3.0`, so a bare
+        # `1.4` some day would still be seen; sort -V orders them correctly.
+        latest=$(git ls-remote --tags --refs https://github.com/coccinelle/coccinelle.git \
+          | sed -nE 's#.*refs/tags/([0-9]+(\.[0-9]+){1,2})$#\1#p' \
+          | sort -V | tail -n1)
+
+        if [[ -z $latest ]]; then
+          echo "no numeric tags upstream -- has the tag naming changed?" >&2
+          exit 1
+        fi
+        echo "ours=$ours latest=$latest"
+
+        # sort -C exits 0 when its input is already ordered, so latest-then-ours
+        # coming out *disordered* is exactly "upstream is ahead". Equal, or a
+        # VERSION that has run ahead of upstream, stays silent.
+        newer=false
+        printf '%s\n%s\n' "$latest" "$ours" | sort -VC || newer=true
+
+        { echo "ours=$ours"; echo "latest=$latest"; echo "newer=$newer"; } >> "$GITHUB_OUTPUT"
+
+    - name: Open an issue
+      if: steps.check.outputs.newer == 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        OURS: ${{ steps.check.outputs.ours }}
+        LATEST: ${{ steps.check.outputs.latest }}
+      run: |
+        title="coccinelle $LATEST is available (we ship $OURS)"
+
+        # `gh issue create --label` fails on a label that does not exist, and
+        # this one does not until the first run of this workflow makes it.
+        # --force is what makes `create` mean "create or update", so one call
+        # does it; the label is this workflow's to own.
+        gh label create coccinelle-update --force --color 0e8a16 \
+          --description 'A newer coccinelle release is out'
+
+        # --state open: a version already dealt with and closed never comes back.
+        if gh issue list --state open --label coccinelle-update --limit 50 \
+             --json title --jq '.[].title' | grep -qxF "$title"; then
+          echo "already open: $title"
+          exit 0
+        fi
+
+        # The fork coordinates below are build.sh:18-19's COCCINELLE_REPO and
+        # COCCINELLE_REF written out; a rename there has to be echoed here.
+        gh issue create --label coccinelle-update --title "$title" --body-file - <<EOF
+        [coccinelle $LATEST](https://github.com/coccinelle/coccinelle/tree/$LATEST)
+        is out. This repository ships coccinelle $OURS.
+
+        - What changed: [\`$OURS...$LATEST\`](https://github.com/coccinelle/coccinelle/compare/$OURS...$LATEST)
+        - What we build: [\`cvehound\`](https://github.com/evdenis/coccinelle/tree/cvehound), our patches on top of $OURS
+
+        To pick it up:
+
+        - [ ] rebase the \`cvehound\` branch of evdenis/coccinelle onto $LATEST
+        - [ ] bump \`VERSION\` to $LATEST
+        - [ ] update the hand-written mentions in README.md (\`grep -n $OURS README.md\`)
+        - [ ] push the \`$LATEST\` tag and publish the release -- release.yml builds and uploads
+
+        \`build.sh\` needs no edit: \`COCCINELLE_REF\` names the branch, and both the
+        version and FEATURES are read back off the binary that gets built.
+
+        ---
+        Opened by \`.github/workflows/coccinelle-upstream.yml\`.
+        EOF
