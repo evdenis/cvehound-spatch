@@ -49,7 +49,7 @@ Every distribution has it; minimal container images sometimes do not.
 import cvehound_spatch
 
 cvehound_spatch.spatch_path()      # PosixPath('.../cvehound_spatch/spatch')
-cvehound_spatch.COCCINELLE_VERSION # '1.3.2'
+cvehound_spatch.COCCINELLE_VERSION # '1.3.3'
 cvehound_spatch.COCCINELLE_COMMIT  # the exact commit it was built from
 ```
 
@@ -109,18 +109,14 @@ decided by measurement:
 - **Bounds checks kept.** Coccinelle builds with `-unsafe` by default; removing
   the checks is worth about 1 % here, which is not a good trade against running
   a parser over untrusted sources.
-- **Patches on top of 1.3.2.** Two are performance regressions, both submitted
-  upstream and carried here until they are in a release:
-  - caching of `satLabel` results, which fixes a large regression on rules that
-    wrap a pattern in a function context (35× on the rules that trigger it) —
-    [coccinelle#417](https://github.com/coccinelle/coccinelle/pull/417),
-    reviewed;
-  - an atoms-only fallback when the file prefilter's CNF conversion hits
-    `max_cnf`. Giving up there returned "no query", which `worth_trying` reads
-    as "try every file", so the semantic patch ran over the whole tree with no
-    prefiltering at all; it now degrades to a one-clause query over the atoms,
-    which is still sound because the formula is negation-free —
-    [coccinelle#420](https://github.com/coccinelle/coccinelle/pull/420).
+- **Patches on top of 1.3.3.** One is a performance regression, submitted
+  upstream and carried here until it is in a release: an atoms-only fallback
+  when the file prefilter's CNF conversion hits `max_cnf`. Giving up there
+  returned "no query", which `worth_trying` reads as "try every file", so the
+  semantic patch ran over the whole tree with no prefiltering at all; it now
+  degrades to a one-clause query over the atoms, which is still sound because
+  the formula is negation-free —
+  [coccinelle#420](https://github.com/coccinelle/coccinelle/pull/420).
 
   Four more change how spatch can be driven. The first three are the named
   capabilities this build's `FEATURES` advertises; the fourth is invisible to
@@ -145,7 +141,7 @@ decided by measurement:
 
 Sources come from the [`cvehound`
 branch](https://github.com/evdenis/coccinelle/tree/cvehound) of the coccinelle
-fork — coccinelle 1.3.2 plus the patches above, nothing else. Every wheel
+fork — coccinelle 1.3.3 plus the patches above, nothing else. Every wheel
 records the exact commit in `BUILD-INFO` and in `COCCINELLE_COMMIT`, and the
 capabilities it was *probed* to have in `FEATURES`:
 
@@ -190,9 +186,9 @@ script CI runs, including a parse check over every CVEhound rule.
 
 ## Versioning
 
-The package version is the coccinelle version it contains: `1.3.2`. Packaging
+The package version is the coccinelle version it contains: `1.3.3`. Packaging
 changes and rebuilds that keep the same coccinelle release bump a post-release
-segment (`1.3.2.post1`), and a new coccinelle release gives a new version.
+segment (`1.3.3.post1`), and a new coccinelle release gives a new version.
 
 ## License
 
