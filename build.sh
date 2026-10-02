@@ -135,6 +135,10 @@ echo "== coccinelle: $COCCINELLE_SHA"
 # --- configure + make --------------------------------------------------------
 cd "$WORK"
 ./autogen --ignore_localversion
+# The commit ends `spatch --version` and keys the AST cache, on builds that know
+# the variable; set it from the resolved SHA so it names the source even where
+# the clone's git metadata would not.
+export COCCI_BUILD_ID=${COCCI_BUILD_ID:-$(git -C "$WORK" rev-parse --short=12 HEAD)}
 
 CONFIGURE_FLAGS=(
     --prefix="$STAGE"
@@ -184,6 +188,7 @@ cat > "$OUT/BUILD-INFO" <<EOF
 coccinelle_repo: $COCCINELLE_REPO
 coccinelle_ref: $COCCINELLE_REF
 coccinelle_sha: $COCCINELLE_SHA
+build_id: $COCCI_BUILD_ID
 spatch_version: $SPATCH_VERSION
 ocaml_version: $(ocamlopt -version)
 configure_flags: ${CONFIGURE_FLAGS[*]}

@@ -46,15 +46,32 @@ def parse_build_info(path: Path) -> dict[str, str]:
 # so that building from a ref that predates the feature advertises nothing
 # instead of lying. The three ship together from the same branch, so one probe
 # gates the set.
-FEATURE_SET = ('zygote', 'exit124', 'shared-cache')
+LEGACY_FEATURE_SET = ('zygote', 'exit124', 'shared-cache')
 
 
 def probe_features(spatch: Path) -> tuple[str, ...]:
-    """Ask the built binary whether it speaks the zygote protocol.
+    """Ask the built binary what it guarantees.
 
-    An unsupported build exits 2 with "unknown option '--zygote'"; a supported
-    one warms up, reads EOF on stdin and exits 0.
+    A build that knows `--features` lists its tokens, one per line (summary,
+    cache-selfheal, cache-buildid, zygote-v2 and the three below). An older one
+    rejects the option with exit 2, and is asked the legacy question instead:
+    does it speak the zygote protocol? An unsupported build exits 2 with
+    "unknown option '--zygote'"; a supported one warms up, reads EOF on stdin
+    and exits 0.
     """
+    try:
+        listed = subprocess.run(
+            [str(spatch), '--features'],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        listed = None
+    if listed is not None and listed.returncode == 0 and listed.stdout.split():
+        return tuple(listed.stdout.split())
     try:
         run = subprocess.run(
             [str(spatch), '--zygote'],
@@ -65,7 +82,7 @@ def probe_features(spatch: Path) -> tuple[str, ...]:
         )
     except (OSError, subprocess.SubprocessError):
         return ()
-    return FEATURE_SET if run.returncode == 0 else ()
+    return LEGACY_FEATURE_SET if run.returncode == 0 else ()
 
 
 def build_info_module(version: str, info: dict[str, str], features: tuple[str, ...]) -> str:

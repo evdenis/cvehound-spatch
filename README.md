@@ -137,6 +137,25 @@ decided by measurement:
     extraction are memoised, and the cache path no longer forks `/bin/sh` to
     run `mkdir -p` once per file — which a cache *hit* was also paying.
 
+  From `1.3.3.post1` the build also says whether a scan finished. Handed a
+  directory, stock spatch skips any file it raised on and still exits 0, so an
+  empty answer cannot tell a clean tree from a file never scanned:
+  - **`summary`**: every scan ends with one `SPATCH-SUMMARY groups= handled=
+    skipped= dropped= timeouts= unreadable=` line on stderr, and each lost file
+    gets a `SPATCH-DROP kind= reason= file=` line, including unreadable files
+    the `EXN:` lines never showed. Both survive `--very-quiet`; a missing
+    summary means the scan did not finish. The exit code does not change, so a
+    harness that needs to know whether a scan was complete reads the summary.
+  - **`cache-selfheal`**: an AST-cache entry that fails to read is a cache miss:
+    the file is parsed again and the entry rewritten, instead of dropping the
+    file on every scan until its source changes.
+  - **`cache-buildid`**: `spatch --version` ends with `Build: <commit>`, and the
+    commit, the OCaml version and the C-parsing flags key the AST cache.
+  - **`zygote-v2`**: a zygote request carrying `COCCI_ZYGOTE_PROTO=2` is answered
+    with the bytes the child left in each capture and the signal's name, so a
+    capture cut short is detectable. The v1 reply is unchanged, except that a
+    signal is now the host's number rather than OCaml's.
+
 ## Provenance and reproducing a build
 
 Sources come from the [`cvehound`
@@ -147,23 +166,33 @@ capabilities it was *probed* to have in `FEATURES`:
 
 ```python
 >>> import cvehound_spatch
->>> cvehound_spatch.FEATURES
-frozenset({'exit124', 'shared-cache', 'zygote'})
+>>> sorted(cvehound_spatch.FEATURES)
+['cache-buildid', 'cache-selfheal', 'exit124', 'features', 'shared-cache',
+ 'summary', 'zygote', 'zygote-v2']
 ```
 
-`FEATURES` exists because these capabilities cannot be detected from outside:
-`--zygote` is dispatched before spatch parses its arguments, so it appears in
-no `--help` output, and the version banner is identical with and without it.
-`make_wheel.py` probes the binary at pack time rather than asserting, so a
-build from a ref that predates a feature advertises nothing instead of lying,
-and a consumer reading `getattr(cvehound_spatch, 'FEATURES', frozenset())`
-degrades correctly against any older wheel.
+`FEATURES` exists because the first three capabilities cannot be detected from
+outside: `--zygote` is dispatched before spatch parses its arguments, so it
+appears in no `--help` output, and the version banner was identical with and
+without it. Builds from `1.3.3.post1` answer `spatch --features` with one token
+per line; older ones reject the option with exit 2. `make_wheel.py` probes the
+binary at pack time rather than asserting, asking `--features` first and the
+legacy `--zygote` question otherwise, so a build from a ref that predates a
+feature advertises nothing instead of lying, and a consumer reading
+`getattr(cvehound_spatch, 'FEATURES', frozenset())` degrades correctly against
+any older wheel.
 
 To rebuild locally on Linux (needs podman or docker):
 
 ```shell
 ./build-in-container.sh          # -> dist/bundle-<arch>/
 ./make_wheel.py --bundle dist/bundle-$(uname -m)
+```
+
+To build an unpublished branch of a local clone, mount it read-only:
+
+```shell
+COCCINELLE_SRC=../coccinelle ./build-in-container.sh COCCINELLE_REF=<branch>
 ```
 
 On macOS there is no container to be portable against, so `build.sh` runs

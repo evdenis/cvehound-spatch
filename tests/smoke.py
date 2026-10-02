@@ -16,9 +16,12 @@ from __future__ import annotations  # the oldest interpreter this must run on is
 
 import argparse
 import os
+import re
 import shutil
+import struct
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent / 'fixtures'
@@ -86,6 +89,104 @@ def detect(spatch: Path, rule: Path, source: Path) -> str:
     return run.stdout.strip()
 
 
+SUMMARY_RE = re.compile(r'^SPATCH-SUMMARY (.*)$', re.MULTILINE)
+
+
+def summary(stderr: str) -> dict:
+    """The one SPATCH-SUMMARY line as a dict of ints; {} when absent or repeated."""
+    lines = SUMMARY_RE.findall(stderr)
+    if len(lines) != 1:
+        return {}
+    return {key: int(value) for key, value in (pair.split('=') for pair in lines[0].split())}
+
+
+def scan_dir(spatch: Path, tree: Path, *extra: str) -> subprocess.CompletedProcess:
+    rule = FIXTURES / 'rule.cocci'
+    return spatch_run(
+        spatch, '--no-includes', '--include-headers', '-D', 'detect', '--very-quiet',
+        *extra, '--cocci-file', str(rule), '--dir', str(tree),
+    )
+
+
+def fixture_tree(root: Path) -> Path:
+    tree = root / 'tree'
+    tree.mkdir()
+    for name in ('vulnerable.c', 'fixed.c'):
+        shutil.copy(FIXTURES / name, tree / name)
+    return tree
+
+
+def zygote_request(proc: subprocess.Popen, capture: str, env: list, argv: list) -> str:
+    """One request in the zygote framing: u32 BE field count, u32-prefixed fields."""
+    fields = [capture.encode(), str(len(env)).encode(), *(e.encode() for e in env), *(a.encode() for a in argv)]
+    proc.stdin.write(struct.pack('>I', len(fields)) + b''.join(struct.pack('>I', len(f)) + f for f in fields))
+    proc.stdin.flush()
+    (length,) = struct.unpack('>I', proc.stdout.read(4))
+    return proc.stdout.read(length).decode()
+
+
+def feature_checks(spatch: Path, features: frozenset, build_info: dict) -> None:
+    """What the build advertises, checked against what it does. Each check runs
+    only when its token is declared, so an older wheel still passes."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        tree = fixture_tree(root)
+        if 'summary' in features:
+            run = scan_dir(spatch, tree)
+            got = summary(run.stderr)
+            check('summary: one SPATCH-SUMMARY line ends a scan', bool(got), run.stderr[-300:])
+            if got:
+                check(
+                    'summary: groups = handled + skipped + dropped, nothing dropped',
+                    got['groups'] == 2 and got['dropped'] == 0
+                    and got['groups'] == got['handled'] + got['skipped'] + got['dropped'],
+                    str(got),
+                )
+        if 'cache-selfheal' in features:
+            cache = root / 'ast'
+            scan_dir(spatch, tree, '--cache-prefix', str(cache))
+            entries = [e for e in cache.rglob('vulnerable.c.ast_raw')]
+            check('cache-selfheal: a scan writes the entry', len(entries) == 1)
+            if entries:
+                os.truncate(entries[0], 100)
+                run = scan_dir(spatch, tree, '--cache-prefix', str(cache))
+                check('cache-selfheal: a torn entry still reports', bool(run.stdout.strip()))
+                check('cache-selfheal: the entry is rewritten', entries[0].stat().st_size > 100)
+        if 'cache-buildid' in features:
+            last = spatch_run(spatch, '--version').stdout.strip().splitlines()[-1]
+            check('cache-buildid: --version ends with Build:', last.startswith('Build: '), last)
+            if build_info.get('build_id'):
+                check('cache-buildid: the banner names the packaged build', last == f'Build: {build_info["build_id"]}', last)
+        if 'summary' in features and os.geteuid() != 0:
+            # root reads a 0000 file, so the unreadable case cannot be made there
+            locked = tree / 'locked.c'
+            shutil.copy(FIXTURES / 'vulnerable.c', locked)
+            locked.chmod(0)
+            try:
+                run = scan_dir(spatch, tree)
+                got = summary(run.stderr)
+                check('summary: an unreadable file is named in a SPATCH-DROP line', 'SPATCH-DROP kind=unreadable' in run.stderr)
+                check('summary: and counted, with the exit code unchanged',
+                      got.get('unreadable') == 1 and run.returncode == 0, f'rc={run.returncode} {got}')
+            finally:
+                locked.chmod(0o644)
+                locked.unlink()
+        if 'zygote-v2' in features:
+            proc = subprocess.Popen([str(spatch), '--zygote'], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            argv = ['--no-includes', '-D', 'detect', '--very-quiet', '--cocci-file',
+                    str(FIXTURES / 'rule.cocci'), str(tree / 'vulnerable.c')]
+            try:
+                capture = str(root)
+                check('zygote: a v1 reply is unchanged', zygote_request(proc, capture, [], argv) == 'exit 0')
+                reply = zygote_request(proc, capture, ['COCCI_ZYGOTE_PROTO=2'], argv)
+                sizes = tuple(os.path.getsize(root / f'zygote.{n}') for n in ('stdout', 'stderr'))
+                check('zygote-v2: the reply carries the capture sizes',
+                      reply == 'exit 0 stdout=%d stderr=%d' % sizes, reply)
+            finally:
+                proc.stdin.close()
+                proc.wait(timeout=30)
+
+
 def find_rules(explicit: str | None) -> Path | None:
     if explicit:
         return Path(explicit)
@@ -132,6 +233,10 @@ def main() -> int:
     rule = FIXTURES / 'rule.cocci'
     check('fixture: vulnerable source reports', bool(detect(spatch, rule, FIXTURES / 'vulnerable.c')))
     check('fixture: fixed source stays silent', not detect(spatch, rule, FIXTURES / 'fixed.c'))
+
+    features = frozenset(getattr(cvehound_spatch, 'FEATURES', ()))
+    print(f'features: {" ".join(sorted(features)) or "(none)"}')
+    feature_checks(spatch, features, getattr(cvehound_spatch, 'BUILD_INFO', {}))
 
     rules_dir = find_rules(args.rules)
     if rules_dir is None:
