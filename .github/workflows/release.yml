@@ -2,7 +2,7 @@
 #
 # One-time PyPI-side setup: add a trusted publisher at
 # https://pypi.org/manage/project/cvehound-spatch/settings/publishing/
-# with owner=evdenis, repository=cvehound-spatch, workflow=release.yml,
+# with owner=linux-analysis, repository=cvehound-spatch, workflow=release.yml,
 # environment=pypi.
 #
 # Publishing a GitHub release is what ships a version; running this workflow by

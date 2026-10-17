@@ -100,11 +100,11 @@ jobs:
         is out. This repository ships coccinelle $OURS.
 
         - What changed: [\`$OURS...$LATEST\`](https://github.com/coccinelle/coccinelle/compare/$OURS...$LATEST)
-        - What we build: [\`cvehound\`](https://github.com/evdenis/coccinelle/tree/cvehound), our patches on top of $OURS
+        - What we build: [\`cvehound\`](https://github.com/linux-analysis/coccinelle/tree/cvehound), our patches on top of $OURS
 
         To pick it up:
 
-        - [ ] rebase the \`cvehound\` branch of evdenis/coccinelle onto $LATEST
+        - [ ] rebase the \`cvehound\` branch of linux-analysis/coccinelle onto $LATEST
         - [ ] bump \`VERSION\` to $LATEST
         - [ ] update the hand-written mentions in README.md (\`grep -n $OURS README.md\`)
         - [ ] push the \`$LATEST\` tag and publish the release -- release.yml builds and uploads

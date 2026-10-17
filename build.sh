@@ -15,7 +15,7 @@
 # arrays and no ${var,,}.
 set -euo pipefail
 
-COCCINELLE_REPO=${COCCINELLE_REPO:-https://github.com/evdenis/coccinelle.git}
+COCCINELLE_REPO=${COCCINELLE_REPO:-https://github.com/linux-analysis/coccinelle.git}
 COCCINELLE_REF=${COCCINELLE_REF:-cvehound}
 OCAML_VERSION=${OCAML_VERSION:-5.3.0}
 OPAM_VERSION=${OPAM_VERSION:-2.2.1}

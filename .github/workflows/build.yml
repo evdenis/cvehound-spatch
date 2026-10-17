@@ -168,5 +168,5 @@ jobs:
       with:
         python-version: '3.11'
     - run: |
-        pip install -q dist/*.whl 'cvehound @ git+https://github.com/evdenis/cvehound@main'
+        pip install -q dist/*.whl 'cvehound @ git+https://github.com/linux-analysis/cvehound@main'
         CVEHOUND_CONTENT=none python tests/smoke.py

@@ -2,8 +2,8 @@
 
 A prebuilt [Coccinelle](https://coccinelle.gitlabpages.inria.fr/website/)
 `spatch`, packaged as a Python wheel so that
-[CVEhound](https://github.com/evdenis/cvehound) works without asking you to
-install OCaml.
+[CVEhound](https://github.com/linux-analysis/cvehound) works without asking
+you to install OCaml.
 
 **You probably do not want this package on its own.** Install it through
 CVEhound, which picks it up automatically:
@@ -159,10 +159,10 @@ decided by measurement:
 ## Provenance and reproducing a build
 
 Sources come from the [`cvehound`
-branch](https://github.com/evdenis/coccinelle/tree/cvehound) of the coccinelle
-fork — coccinelle 1.3.3 plus the patches above, nothing else. Every wheel
-records the exact commit in `BUILD-INFO` and in `COCCINELLE_COMMIT`, and the
-capabilities it was *probed* to have in `FEATURES`:
+branch](https://github.com/linux-analysis/coccinelle/tree/cvehound) of the
+coccinelle fork — coccinelle 1.3.3 plus the patches above, nothing else. Every
+wheel records the exact commit in `BUILD-INFO` and in `COCCINELLE_COMMIT`, and
+the capabilities it was *probed* to have in `FEATURES`:
 
 ```python
 >>> import cvehound_spatch
